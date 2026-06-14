@@ -39,7 +39,7 @@ class DoubleEliminationBracket:
         if self.team_count < 2:
             raise ValueError("淘汰赛至少需要2支队伍")
         self.upper_round_count = math.ceil(math.log2(self.team_count))
-        self.lower_round_count = self.upper_round_count * 2 - 1
+        self.lower_round_count = self.upper_round_count * 2 - 2
 
     def _get_upper_round_name(self, round_idx: int) -> str:
         total_upper = self.upper_round_count
@@ -80,11 +80,13 @@ class DoubleEliminationBracket:
             upper_matches_per_round.append(matches_in_round)
 
         lower_matches_per_round = []
-        for r in range(self.lower_round_count):
-            if r == 0:
-                matches = upper_matches_per_round[0]
+        for k in range(self.lower_round_count):
+            if k == 0:
+                matches = upper_matches_per_round[0] // 2
+            elif k % 2 == 1:
+                matches = lower_matches_per_round[k - 1]
             else:
-                matches = upper_matches_per_round[min(r, self.upper_round_count - 1)]
+                matches = lower_matches_per_round[k - 1] // 2
             lower_matches_per_round.append(matches)
 
         first_round_seeds = self._generate_first_round_pairings(seeds, byes_needed)
@@ -119,9 +121,9 @@ class DoubleEliminationBracket:
                 )
                 self._add_match_info(info)
 
-        for r in range(self.lower_round_count):
-            round_name = self._get_lower_round_name(r)
-            matches_in_round = lower_matches_per_round[r]
+        for k in range(self.lower_round_count):
+            round_name = self._get_lower_round_name(k)
+            matches_in_round = lower_matches_per_round[k]
 
             for pos in range(matches_in_round):
                 info = BracketMatchInfo(
@@ -130,7 +132,7 @@ class DoubleEliminationBracket:
                     position=pos
                 )
 
-                if r == 0:
+                if k == 0:
                     upper_rd = self._get_upper_round_name(0)
                     info.source1_type = "loser"
                     info.source1_round = upper_rd
@@ -138,24 +140,24 @@ class DoubleEliminationBracket:
                     info.source2_type = "loser"
                     info.source2_round = upper_rd
                     info.source2_position = pos * 2 + 1
+                elif k % 2 == 1:
+                    upper_r = (k + 1) // 2
+                    upper_rd = self._get_upper_round_name(upper_r)
+                    prev_lower = self._get_lower_round_name(k - 1)
+                    info.source1_type = "loser"
+                    info.source1_round = upper_rd
+                    info.source1_position = pos
+                    info.source2_type = "winner"
+                    info.source2_round = prev_lower
+                    info.source2_position = pos
                 else:
-                    upper_round_idx = r // 2
-                    if r % 2 == 1:
-                        upper_rd = self._get_upper_round_name(upper_round_idx + 1)
-                        info.source1_type = "loser"
-                        info.source1_round = upper_rd
-                        info.source1_position = pos
-                        info.source2_type = "winner"
-                        info.source2_round = self._get_lower_round_name(r - 1)
-                        info.source2_position = pos
-                    else:
-                        prev_lower = self._get_lower_round_name(r - 1)
-                        info.source1_type = "winner"
-                        info.source1_round = prev_lower
-                        info.source1_position = pos * 2
-                        info.source2_type = "winner"
-                        info.source2_round = prev_lower
-                        info.source2_position = pos * 2 + 1
+                    prev_lower = self._get_lower_round_name(k - 1)
+                    info.source1_type = "winner"
+                    info.source1_round = prev_lower
+                    info.source1_position = pos * 2
+                    info.source2_type = "winner"
+                    info.source2_round = prev_lower
+                    info.source2_position = pos * 2 + 1
 
                 self._add_match_info(info)
 
@@ -239,17 +241,20 @@ class DoubleEliminationBracket:
                     info.winner_to_position = pos // 2
                     info.winner_to_slot = pos % 2
 
-                    if r < self.lower_round_count:
-                        loser_round_idx = r * 2 if r > 0 else 0
-                        if loser_round_idx < self.lower_round_count:
-                            loser_round = self._get_lower_round_name(loser_round_idx)
-                            info.loser_to_round = loser_round
-                            if r == 0:
-                                info.loser_to_position = pos // 2
-                                info.loser_to_slot = pos % 2
-                            else:
-                                info.loser_to_position = pos
-                                info.loser_to_slot = 0
+                    if r == 0:
+                        loser_k = 0
+                    else:
+                        loser_k = 2 * r - 1
+                    
+                    if loser_k < self.lower_round_count:
+                        loser_round = self._get_lower_round_name(loser_k)
+                        info.loser_to_round = loser_round
+                        if r == 0:
+                            info.loser_to_position = pos // 2
+                            info.loser_to_slot = pos % 2
+                        else:
+                            info.loser_to_position = pos
+                            info.loser_to_slot = 0
 
         upper_final = self._get_match(BracketRound.UPPER_FINAL.value, "upper", 0)
         if upper_final:
@@ -258,19 +263,23 @@ class DoubleEliminationBracket:
             upper_final.winner_to_slot = 0
             upper_final.loser_to_round = BracketRound.LOWER_FINAL.value
             upper_final.loser_to_position = 0
-            upper_final.loser_to_slot = 1
+            upper_final.loser_to_slot = 0
 
-        for r in range(self.lower_round_count - 1):
-            curr_round = self._get_lower_round_name(r)
-            next_round = self._get_lower_round_name(r + 1)
-            matches_in_curr = lower_counts[r]
+        for k in range(self.lower_round_count - 1):
+            curr_round = self._get_lower_round_name(k)
+            next_round = self._get_lower_round_name(k + 1)
+            matches_in_curr = lower_counts[k]
 
             for pos in range(matches_in_curr):
                 info = self._get_match(curr_round, "lower", pos)
                 if info:
                     info.winner_to_round = next_round
-                    info.winner_to_position = pos // 2 if matches_in_curr > lower_counts[r+1] else pos
-                    info.winner_to_slot = pos % 2 if matches_in_curr > lower_counts[r+1] else 1
+                    if k % 2 == 0:
+                        info.winner_to_position = pos
+                        info.winner_to_slot = 1
+                    else:
+                        info.winner_to_position = pos // 2
+                        info.winner_to_slot = pos % 2
 
         lower_final = self._get_match(BracketRound.LOWER_FINAL.value, "lower", 0)
         if lower_final:
@@ -359,11 +368,13 @@ class BracketProgression:
         target_match = all_matches.get(target_match_key)
 
         if target_match and target_match.status.value == "pending":
-            if target_slot == 0:
-                update_match_teams(target_match.id, team_id, target_match.team2_id)
-            elif target_slot == 1:
-                update_match_teams(target_match.id, target_match.team1_id, team_id)
-            return target_match.id
+            latest_match = get_match(target_match.id)
+            if latest_match and latest_match.status.value == "pending":
+                if target_slot == 0:
+                    update_match_teams(latest_match.id, team_id, latest_match.team2_id)
+                elif target_slot == 1:
+                    update_match_teams(latest_match.id, latest_match.team1_id, team_id)
+                return latest_match.id
 
         return None
 

@@ -26,6 +26,7 @@ def init_database():
         playoff_format TEXT DEFAULT 'bo3',
         advance_wins INTEGER DEFAULT 3,
         eliminate_losses INTEGER DEFAULT 3,
+        playoff_team_count INTEGER DEFAULT 8,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -92,6 +93,12 @@ def init_database():
     CREATE INDEX IF NOT EXISTS idx_match_tournament ON match(tournament_id);
     CREATE INDEX IF NOT EXISTS idx_history_tournament ON matchup_history(tournament_id);
     """)
+
+    cursor.execute("PRAGMA table_info(tournament)")
+    columns = [row["name"] for row in cursor.fetchall()]
+    if "playoff_team_count" not in columns:
+        cursor.execute("ALTER TABLE tournament ADD COLUMN playoff_team_count INTEGER DEFAULT 8")
+
     conn.commit()
     conn.close()
 

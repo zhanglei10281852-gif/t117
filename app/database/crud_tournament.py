@@ -5,13 +5,14 @@ from app.models.models import Tournament, TournamentPhase
 
 def create_tournament(name: str, swiss_format: str = "bo1",
                       playoff_format: str = "bo3",
-                      advance_wins: int = 3, eliminate_losses: int = 3) -> int:
+                      advance_wins: int = 3, eliminate_losses: int = 3,
+                      playoff_team_count: int = 8) -> int:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-    INSERT INTO tournament (name, phase, current_round, swiss_format, playoff_format, advance_wins, eliminate_losses)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (name, TournamentPhase.SETUP.value, 0, swiss_format, playoff_format, advance_wins, eliminate_losses))
+    INSERT INTO tournament (name, phase, current_round, swiss_format, playoff_format, advance_wins, eliminate_losses, playoff_team_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (name, TournamentPhase.SETUP.value, 0, swiss_format, playoff_format, advance_wins, eliminate_losses, playoff_team_count))
     tournament_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -33,7 +34,8 @@ def get_tournament(tournament_id: int) -> Optional[Tournament]:
             swiss_format=row["swiss_format"],
             playoff_format=row["playoff_format"],
             advance_wins=row["advance_wins"],
-            eliminate_losses=row["eliminate_losses"]
+            eliminate_losses=row["eliminate_losses"],
+            playoff_team_count=row["playoff_team_count"]
         )
     return None
 
@@ -52,7 +54,8 @@ def get_all_tournaments() -> List[Tournament]:
         swiss_format=row["swiss_format"],
         playoff_format=row["playoff_format"],
         advance_wins=row["advance_wins"],
-        eliminate_losses=row["eliminate_losses"]
+        eliminate_losses=row["eliminate_losses"],
+        playoff_team_count=row["playoff_team_count"]
     ) for row in rows]
 
 

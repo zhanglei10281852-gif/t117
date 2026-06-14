@@ -35,6 +35,8 @@ class TournamentManager:
     def _load_tournament(self) -> None:
         if self.tournament_id:
             self._tournament = crud_tournament.get_tournament(self.tournament_id)
+            if self._tournament:
+                self._playoff_team_count = self._tournament.playoff_team_count
 
     def create_tournament(self, name: str, swiss_format: str = "bo1",
                         playoff_format: str = "bo3",
@@ -46,7 +48,7 @@ class TournamentManager:
             raise TournamentError("淘汰赛队伍数至少为2")
 
         self.tournament_id = crud_tournament.create_tournament(
-            name, swiss_format, playoff_format, advance_wins, eliminate_losses)
+            name, swiss_format, playoff_format, advance_wins, eliminate_losses, playoff_teams)
         self._playoff_team_count = playoff_teams
         self._load_tournament()
         return self.tournament_id
@@ -82,7 +84,7 @@ class TournamentManager:
         if self._tournament and self._tournament.phase != TournamentPhase.SETUP:
             raise TournamentError("赛事已开始，无法修改队伍")
         team = crud_team.get_team(team_id)
-        if not team:
+        if team:
             team.name = name.strip()
             team.seed = seed
             crud_team.update_team(team)
@@ -106,6 +108,9 @@ class TournamentManager:
         if count % 2 != 0:
             raise TournamentError("淘汰赛队伍数必须为偶数")
         self._playoff_team_count = count
+        if self._tournament:
+            self._tournament.playoff_team_count = count
+            crud_tournament.update_tournament(self._tournament)
 
     def start_swiss(self) -> None:
         if self._tournament is None:
@@ -136,22 +141,17 @@ class TournamentManager:
                 raise PhaseTransitionError("上一轮比赛尚未全部完成，无法开启下一轮")
 
         active_teams = self.get_active_teams()
-        if len(active_teams) <= self._playoff_team_count:
-            raise PhaseTransitionError(
-                f"剩余活跃队伍({len(active_teams)})已达到淘汰赛名额({self._playoff_team_count})，"
-                f"请进入淘汰赛阶段")
-
         advanced_count = len([t for t in self.get_teams()
                        if t.status == TeamStatus.ADVANCED])
         eliminated_count = len([t for t in self.get_teams()
                                if t.status == TeamStatus.ELIMINATED])
 
+        if len(active_teams) == 0:
+            raise PhaseTransitionError("没有活跃队伍可以配对")
+
         if advanced_count >= self._playoff_team_count:
             raise PhaseTransitionError(
                 f"已有足够队伍晋级({advanced_count})，请进入淘汰赛阶段")
-
-        if len(active_teams) == 0:
-            raise PhaseTransitionError("没有活跃队伍可以配对")
 
         next_round_num = self._tournament.current_round + 1
 
@@ -175,11 +175,11 @@ class TournamentManager:
         match_num = 1
         for pairing in pairings:
             if pairing.is_bye:
-                crud_match.create_match(
+                match_id = crud_match.create_match(
                     self.tournament_id, round_id, match_num,
                     pairing.team1_id, None, is_bye=True)
                 if pairing.team1_id:
-                    self._handle_bye_win(pairing.team1_id, next_round_num)
+                    self._handle_bye_win(pairing.team1_id, match_id, next_round_num)
             else:
                 crud_match.create_match(
                     self.tournament_id, round_id, match_num,
@@ -193,20 +193,20 @@ class TournamentManager:
         round_obj = crud_round.get_round(round_id)
         return round_obj
 
-    def _handle_bye_win(self, team_id: int, round_num: int) -> None:
+    def _handle_bye_win(self, team_id: int, match_id: int, round_num: int) -> None:
         team = crud_team.get_team(team_id)
-        if not team:
+        if team:
             new_wins = team.wins + 1
             new_status = team.status
             eliminated_at = team.eliminated_at_round
 
             if new_wins >= self._tournament.advance_wins:
                 new_status = TeamStatus.ADVANCED
-            elif team.losses >= self._tournament.eliminate_losses:
-                    pass
 
             crud_team.update_team_record(
                 team_id, new_wins, team.losses, new_status, eliminated_at)
+            crud_team.update_team_bye(team_id, 1)
+            crud_match.update_match_result(match_id, 1, 0, team_id)
 
     def _get_wins_needed(self, match_format: str) -> int:
         if match_format == "bo1":
@@ -321,10 +321,7 @@ class TournamentManager:
         BracketProgression.advance_winner(
             match, match_map, self._bracket_structure, winner_id, is_winner=True)
 
-        lower_final_rounds = ["lower_final", "grand_final", "grand_final_reset"]
-        if match.bracket_round not in lower_final_rounds:
-            pass
-        else:
+        if match.bracket_side == "upper" or match.bracket_round == "grand_final":
             BracketProgression.advance_winner(
                 match, match_map, self._bracket_structure, loser_id, is_winner=False)
 
@@ -451,8 +448,38 @@ class TournamentManager:
             return False
 
         all_matches = crud_match.get_matches_by_tournament(self.tournament_id)
-        pending = [m for m in all_matches if m.status == MatchStatus.PENDING and not m.is_bye]
-        return len(pending) == 0
+        
+        grand_final = None
+        grand_final_reset = None
+        other_pending = []
+        
+        for m in all_matches:
+            if m.bracket_round == "grand_final":
+                grand_final = m
+            elif m.bracket_round == "grand_final_reset":
+                grand_final_reset = m
+            elif m.status == MatchStatus.PENDING and not m.is_bye:
+                other_pending.append(m)
+        
+        if len(other_pending) > 0:
+            return False
+        
+        if not grand_final or grand_final.status != MatchStatus.COMPLETED:
+            return False
+        
+        if not grand_final_reset or grand_final_reset.status == MatchStatus.COMPLETED:
+            return True
+        
+        upper_final_winner_id = None
+        for m in all_matches:
+            if m.bracket_round == "upper_final" and m.winner_id:
+                upper_final_winner_id = m.winner_id
+                break
+        
+        if grand_final.winner_id == upper_final_winner_id:
+            return True
+        
+        return False
 
     def complete_tournament(self) -> None:
         if not self._tournament:

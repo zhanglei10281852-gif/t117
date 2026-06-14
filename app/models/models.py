@@ -50,6 +50,7 @@ class Tournament:
     playoff_format: str = "bo3"
     advance_wins: int = 3
     eliminate_losses: int = 3
+    playoff_team_count: int = 8
 
 
 @dataclass
